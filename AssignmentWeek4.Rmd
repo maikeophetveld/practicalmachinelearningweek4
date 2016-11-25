@@ -1,0 +1,112 @@
+---
+title: "Quantified self movement: Identify correct and incorrect barbell lifts from data"
+output: 
+  html_document:
+    keep_md: true
+---
+
+Currently, a large amount concerning personal activity is collected. Typical about this data is that it is recorded how much of a particular activity a person does, but it is rarely quantified how well the activity is performed. In this project, it is the goal to predict in in which way barbell lifts are performed, using data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+setwd("D:/Users/ohv/Documents/Cursus/Data Science/08_PracticalMachineLearning/Week4")
+library(caret)
+```
+
+## Data Processing
+Data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants is used in this project. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset)". Download and load the data.
+```{r}
+temp <- tempfile()
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",temp)
+traindata_orig <- read.csv(temp, na.strings = c("NA", "#DIV/0!", ""))
+
+temp <- tempfile()
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",temp)
+validationdata_orig <- read.csv(temp, na.strings = c("NA", "#DIV/0!", ""))
+```
+
+There are 5 ways in which the barbell lifts are performed, the variable classe contains this information. This is the variable we want to predict.
+```{r}
+prop.table(table(traindata_orig$classe))
+```
+
+Before any analysis is performed, the data is cleaned. First, the columns that are not required for predictions are deleted (columns 1-7), and columns with missing values are deleted as well.
+
+```{r}
+nzv <- nearZeroVar(traindata_orig, saveMetrics=TRUE)
+traindata <- traindata_orig[,nzv$nzv==FALSE]
+
+temp_train <- traindata
+for(i in 1:length(traindata)) {
+    if( sum( is.na( traindata[, i] ) ) /nrow(traindata) >= .7) {
+        for(j in 1:length(temp_train)) {
+            if( length( grep(names(traindata[i]), names(temp_train)[j]) ) == 1)  {
+                temp_train <- temp_train[ , -j]
+            }   
+        } 
+    }
+}
+
+# Set back to the original variable name
+traindata <- temp_train
+rm(temp_train)
+
+clean1 <- colnames(traindata)
+clean2 <- colnames(traindata[, -59])                  # remove the classe column
+validationdata <- validationdata_orig[clean2]         # allow only variables in myTesting that are also in myTraining
+
+dim(traindata)
+
+```
+
+After this, the training data is partitioned in a testing and training dataset. This helps for cross-validation and selecting the best model for the predictions.
+```{r}
+set.seed(312567)
+inTraining  <- createDataPartition(y=traindata$classe, p=0.70, list=FALSE)
+training    <- traindata[inTraining,]
+test        <- traindata[-inTraining,]
+dim(training)
+```
+
+## Prediction models
+
+### Build models
+3 models are evaluated for predicting the classes of barbell lifting. These are gradient boosting, random forests and decision trees. Cross-validation with K=3 is implemented.
+
+```{r,warning=FALSE,message=FALSE}
+fitControl <- trainControl(method='cv', number = 3)
+model_gbm <- train(  classe ~ ., training, trControl=fitControl,  method='gbm' )
+save(model_gbm, file='./ModelFitGBM.RData')
+
+model_dectree <- train(  classe ~ ., training,  trControl=fitControl,  method='rpart' )
+save(model_dectree, file='./ModelFitDecisonTree.RData')
+
+model_rf <- train(   classe ~ ., training,  trControl=fitControl,  method='rf',  ntree=100 )
+save(model_rf, file='./ModelFitRF.RData')
+```
+
+### Model Evaluation
+
+```{r}
+pred_dectree <- predict(model_dectree, newdata=test)
+cm_dectree <- confusionMatrix(pred_dectree, test$classe)
+pred_gbm <- predict(model_gbm, newdata=test)
+cm_gbm <- confusionMatrix(pred_gbm, test$classe)
+pred_rf <- predict(model_rf, newdata=test)
+cm_rf <- confusionMatrix(pred_rf, test$classe)
+AccuracyResults <- data.frame(
+  Model = c('DecTree', 'GBM', 'RF'),
+  Accuracy = rbind(cm_dectree$overall[1], cm_gbm$overall[1], cm_rf$overall[1])
+)
+print(AccuracyResults)
+```
+
+Random forest and Gradient boosting give good results, the decision tree model performs significantly worse. Because the accuracy is already high, we will not investigate a model that is a combination of these three model types.
+
+### Generate predictions
+A set of predictions is generated for the validation data with the random forest model, this data is evaluated in the Coursera course online. As expected, the results are accurate.
+
+```{r}
+pred_validation <- predict(model_rf, newdata=validationdata)
+pred_validation
+```
+
